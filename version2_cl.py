@@ -5,8 +5,9 @@ Dimension 1: Equation System — Unscaled (1.4) vs Scaled (1.5, Robust-PINN)
 Dimension 2: BC Treatment   — Soft (Penalty) vs Hard (Distance Function)
 
 Manufactured solution on Ω = [0,1]²:
-    y_true(x) = sin(πx₁)sin(πx₂)
-    p_true(x) = sin(πx₁)sin(πx₂)
+    ȳ_true(x) = sin(πx₁)sin(πx₂)
+    p̄_true(x) = α · sin(πx₁)sin(πx₂)
+    f(x) = (2π² + 1) · ȳ,  y_d = (1 - 2π²α) · ȳ,  u_d = 0
 
 Outputs:
     ablation_loss_evolution.png   — 4-panel loss component curves
@@ -81,25 +82,29 @@ class ManufacturedSolution:
         return torch.sin(self.pi * x1) * torch.sin(self.pi * x2)
 
     def exact_p(self, x):
+        """真实伴随变量 p̄_exact = α · sin(πx₁)sin(πx₂)，量级为 O(α)"""
         x1, x2 = x[:, 0:1], x[:, 1:2]
-        return torch.sin(self.pi * x1) * torch.sin(self.pi * x2)
+        return self.alpha * torch.sin(self.pi * x1) * torch.sin(self.pi * x2)
 
     def target_yd(self, x):
-        return (1.0 - 2.0 * self.pi**2) * self.exact_y(x)
+        """y_d = (1 - 2π²α) · ȳ_exact"""
+        return (1.0 - 2.0 * self.pi**2 * self.alpha) * self.exact_y(x)
 
     def source_f(self, x):
-        return (2.0 * self.pi**2 + 1.0 / self.alpha) * self.exact_y(x)
+        """f = (2π² + 1) · ȳ_exact — O(1)，不含 α⁻¹"""
+        return (2.0 * self.pi**2 + 1.0) * self.exact_y(x)
 
     def prior_ud(self, x):
         return torch.zeros_like(x[:, 0:1])
 
 
 # ===========================================================================
-# MLP Network: [2, 50, 50, 50, 2] + Swish
+# Single-Output MLP: [2, 50, 50, 50, 1] + SiLU
+# task1.md 要求：两个独立网络 net_y 和 net_p，禁止单网络双输出
 # ===========================================================================
-class PINN_Net(nn.Module):
-    def __init__(self, layers=[2, 50, 50, 50, 2]):
-        super(PINN_Net, self).__init__()
+class SingleOutputNet(nn.Module):
+    def __init__(self, layers=[2, 50, 50, 50, 1]):
+        super(SingleOutputNet, self).__init__()
         self.hidden_layers = nn.ModuleList()
         for i in range(len(layers) - 2):
             self.hidden_layers.append(nn.Linear(layers[i], layers[i+1]))
@@ -109,8 +114,7 @@ class PINN_Net(nn.Module):
     def forward(self, x):
         for layer in self.hidden_layers:
             x = self.activation(layer(x))
-        x = self.output_layer(x)
-        return x[:, 0:1], x[:, 1:2]
+        return self.output_layer(x)
 
 
 # ===========================================================================
@@ -127,8 +131,18 @@ class OptimalControlSolver:
         self.alpha = alpha
         self.mms = mms
         self.device = device
-        self.net = PINN_Net().to(device)
+        # 两个独立网络 (task1.md 要求)
+        self.net_y = SingleOutputNet().to(device)
+        self.net_p = SingleOutputNet().to(device)
         self.omega_bc = 1.0
+
+        # 预计算特征缩放系数 (Output Characteristic Scaling)
+        if system_type == 'unscaled':
+            self.scale_y = 1.0
+            self.scale_p = alpha          # p̄ ~ O(α)
+        else:  # scaled
+            self.scale_y = alpha ** 0.25  # y = α^{1/4} ȳ
+            self.scale_p = alpha ** 0.75  # p = α^{-1/4} p̄ = α^{3/4} sin(...)
 
     def apply_ansatz(self, x, raw_y, raw_p):
         x1, x2 = x[:, 0:1], x[:, 1:2]
@@ -136,12 +150,27 @@ class OptimalControlSolver:
         return raw_y * D_x, raw_p * D_x
 
     def forward_eval(self, x):
-        raw_y, raw_p = self.net(x)
+        raw_y = self.net_y(x)
+        raw_p = self.net_p(x)
+        # Hard BC: ansatz 先于特征缩放 (乘法可交换，顺序等价)
         if self.bc_type == 'hard':
-            y_pred, p_pred = self.apply_ansatz(x, raw_y, raw_p)
-        else:
-            y_pred, p_pred = raw_y, raw_p
+            raw_y, raw_p = self.apply_ansatz(x, raw_y, raw_p)
+        # Output Characteristic Scaling: 网络只学 O(1)，乘以物理量级
+        y_pred = raw_y * self.scale_y
+        p_pred = raw_p * self.scale_p
         return y_pred, p_pred
+
+    def parameters(self):
+        """联合返回两个网络的参数，供 optimizer 使用"""
+        return list(self.net_y.parameters()) + list(self.net_p.parameters())
+
+    def train(self):
+        self.net_y.train()
+        self.net_p.train()
+
+    def eval(self):
+        self.net_y.eval()
+        self.net_p.eval()
 
     def compute_loss(self, x_interior, x_boundary):
         x_interior.requires_grad_(True)
@@ -196,10 +225,10 @@ def sample_points(N_interior, N_boundary, device):
 # Training
 # ===========================================================================
 def train_pinn(solver, epochs, N_int=2000, N_bc=400, lr=1e-3):
-    optimizer = optim.Adam(solver.net.parameters(), lr=lr)
+    optimizer = optim.Adam(solver.parameters(), lr=lr)
     history = {'total': [], 'pde1': [], 'pde2': [], 'bc': []}
 
-    solver.net.train()
+    solver.train()
     for epoch in range(epochs):
         optimizer.zero_grad()
         x_int, x_bc = sample_points(N_int, N_bc, solver.device)
@@ -225,7 +254,7 @@ def train_pinn(solver, epochs, N_int=2000, N_bc=400, lr=1e-3):
 # ===========================================================================
 def evaluate_model(solver, mms, resolution=100):
     """Return predictions, exact solutions, pointwise errors, and L2 errors for both y and p."""
-    solver.net.eval()
+    solver.eval()
 
     x1 = torch.linspace(0, 1, resolution)
     x2 = torch.linspace(0, 1, resolution)
