@@ -136,13 +136,15 @@ class OptimalControlSolver:
         self.net_p = SingleOutputNet().to(device)
         self.omega_bc = 1.0
 
-        # 预计算特征缩放系数 (Output Characteristic Scaling)
+        # Output Characteristic Scaling
+        # Unscaled: 需要缩放 p，防止 α⁻¹·p̄ 梯度爆炸
+        # Scaled:   方程已平衡，不加额外缩放；否则会抵消 Eq 1.5 的平衡效果
         if system_type == 'unscaled':
             self.scale_y = 1.0
             self.scale_p = alpha          # p̄ ~ O(α)
         else:  # scaled
-            self.scale_y = alpha ** 0.25  # y = α^{1/4} ȳ
-            self.scale_p = alpha ** 0.75  # p = α^{-1/4} p̄ = α^{3/4} sin(...)
+            self.scale_y = 1.0            # 网络直接预测缩放变量 y
+            self.scale_p = 1.0            # 网络直接预测缩放变量 p
 
     def apply_ansatz(self, x, raw_y, raw_p):
         x1, x2 = x[:, 0:1], x[:, 1:2]
@@ -155,7 +157,7 @@ class OptimalControlSolver:
         # Hard BC: ansatz 先于特征缩放 (乘法可交换，顺序等价)
         if self.bc_type == 'hard':
             raw_y, raw_p = self.apply_ansatz(x, raw_y, raw_p)
-        # Output Characteristic Scaling: 网络只学 O(1)，乘以物理量级
+        # Output Characteristic Scaling
         y_pred = raw_y * self.scale_y
         p_pred = raw_p * self.scale_p
         return y_pred, p_pred
