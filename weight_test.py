@@ -205,3 +205,13 @@ fig.suptitle(f'Weight Sensitivity Analysis ($\\alpha = {fixed_alpha}$)', fontsiz
 for idx, (ax, var, title) in enumerate(zip(axes, ['y', 'p'], [r'Relative $L^2$ Error of $\overline{y}$', r'Relative $L^2$ Error of $\overline{p}$'])):
     ax.loglog(gammas, results['unscaled'][var], 'o-', color='tomato', label='Unscaled (Eq 1.4)', lw=2)
     ax.loglog(gammas, results['scaled'][var], 's-', color='steelblue', label='Scaled (Eq 1.5 Robust-PINN)', lw=2)
+    ax.set_xlabel(r'$\gamma$ (weight on PDE1)')
+    ax.set_ylabel('Error')
+    ax.set_title(title)
+    ax.grid(True, which='both', alpha=0.3)
+    ax.legend()
+
+plt.tight_layout()
+plt.savefig('weight_sensitivity_result.png', dpi=150)
+plt.close(fig)
+print("\nDone! Saved plot to 'weight_sensitivity_result.png'")
