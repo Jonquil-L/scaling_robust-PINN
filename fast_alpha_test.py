@@ -109,17 +109,45 @@ class FastSolver:
 # ---------------------------------------------------------------------------
 # 4. Fast Training Loop (Static Points)
 # ---------------------------------------------------------------------------
-def fast_train(solver, epochs=2000):
-    optimizer = optim.Adam(list(solver.net_y.parameters()) + list(solver.net_p.parameters()), lr=1e-3)
-    # 静态采样：移出热循环
-    x_int = torch.rand(2000, 2, device=device)
+# ---------------------------------------------------------------------------
+# 4. Hybrid Training Loop (Adam + L-BFGS)
+# ---------------------------------------------------------------------------
+def hybrid_train(solver, adam_epochs=1500, lbfgs_epochs=1000):
+    # --- 阶段 1：Adam 快速探索 ---
+    optimizer_adam = optim.Adam(list(solver.net_y.parameters()) + list(solver.net_p.parameters()), lr=1e-3)
+    x_int = torch.rand(2500, 2, device=device) # 增加一点静态采样点
     
     solver.net_y.train(); solver.net_p.train()
-    for epoch in range(epochs):
-        optimizer.zero_grad()
+    for epoch in range(adam_epochs):
+        optimizer_adam.zero_grad()
         loss = solver.compute_loss(x_int)
         loss.backward()
-        optimizer.step()
+        optimizer_adam.step()
+
+    # --- 阶段 2：L-BFGS 精确收敛 ---
+    # L-BFGS 是基于闭包 (closure) 调用的，需要重新封装 loss 计算
+    optimizer_lbfgs = optim.LBFGS(
+        list(solver.net_y.parameters()) + list(solver.net_p.parameters()),
+        lr=1.0, 
+        max_iter=lbfgs_epochs, 
+        max_eval=lbfgs_epochs * 1.25, 
+        history_size=50,
+        tolerance_grad=1e-7, 
+        tolerance_change=1e-9,
+        line_search_fn="strong_wolfe" # 使用强 Wolfe 条件线搜索，防止步长爆炸
+    )
+
+    def closure():
+        optimizer_lbfgs.zero_grad()
+        loss = solver.compute_loss(x_int)
+        loss.backward()
+        return loss
+
+    # L-BFGS 会在内部自动循环 max_iter 次，期间可能会抛出数值异常，需用 try-except 保护
+    try:
+        optimizer_lbfgs.step(closure)
+    except Exception as e:
+        print(f"      [L-BFGS early stopped due to numerical instability: {e}]")
 
 def evaluate_l2(solver, mms):
     solver.net_y.eval(); solver.net_p.eval()
@@ -155,7 +183,7 @@ for alpha in alphas:
         solver = FastSolver(sys, alpha, mms)
         
         t0 = time.time()
-        fast_train(solver, epochs=2000)
+        hybrid_train(solver, adam_epochs=1500, lbfgs_epochs=1000)
         t_elap = time.time() - t0
         
         err_y, err_p = evaluate_l2(solver, mms)
