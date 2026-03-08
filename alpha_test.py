@@ -166,7 +166,54 @@ def evaluate_l2(solver, mms):
     return err_y, err_p
 
 # ---------------------------------------------------------------------------
-# 5. Execution & Plotting
+# 5. Loss Function Documentation
+# ---------------------------------------------------------------------------
+def print_loss_formulation(alphas_used):
+    """打印两种系统的损失函数数学表达式及具体权重"""
+    print("\n" + "="*80)
+    print("LOSS FUNCTION FORMULATIONS")
+    print("="*80)
+    
+    print("\n1. UNSCALED System (Original Equations):")
+    print("-" * 80)
+    print("   Residuals:")
+    print("      r₁ = -Δȳ - (f + uₐ) + (1/α)p̄")
+    print("      r₂ = -Δp̄ - ȳ + yₐ")
+    print("\n   Loss Function:")
+    print("      ℒ_unscaled = w₁·E[r₁²] + w₂·E[r₂²]")
+    print("\n   Weights (constant for all α):")
+    print("      w₁ = 1.0")
+    print("      w₂ = 1.0")
+    
+    print("\n2. SCALED System (Robust-PINN):")
+    print("-" * 80)
+    print("   Residuals:")
+    print("      r₁ = -α^(1/2)Δȳ + p̄ - α^(3/4)(f + uₐ)")
+    print("      r₂ = -α^(1/2)Δp̄ - ȳ + α^(1/4)yₐ")
+    print("\n   Loss Function (with normalization):")
+    print("      ℒ_scaled = w₁·E[r₁²] + w₂·E[r₂²]")
+    print("               = E[(r₁/α^(3/4))²] + E[(r₂/α^(1/4))²]")
+    print("\n   Weights (α-dependent normalization):")
+    print(f"      {'Alpha':<12} | {'w₁ = 1/α^(3/2)':<20} | {'w₂ = 1/α^(1/2)':<20}")
+    print("      " + "-" * 56)
+    for alpha in alphas_used:
+        w1 = 1.0 / (alpha ** 1.5)
+        w2 = 1.0 / (alpha ** 0.5)
+        print(f"      {alpha:<12.0e} | {w1:<20.4e} | {w2:<20.4e}")
+    
+    print("\n   Notation:")
+    print("      ȳ, p̄  : predicted state and adjoint variables")
+    print("      Δ     : Laplacian operator (Δu = ∂²u/∂x₁² + ∂²u/∂x₂²)")
+    print("      f     : source term")
+    print("      yₐ    : target state")
+    print("      uₐ    : prior control (= 0 in this code)")
+    print("      α     : regularization parameter")
+    print("      E[·]  : mean over sampling points")
+    print("      w₁,w₂ : loss weights for residual terms")
+    print("="*80 + "\n")
+
+# ---------------------------------------------------------------------------
+# 6. Execution & Plotting
 # ---------------------------------------------------------------------------
 alphas = [1e-2, 1e-3, 1e-4, 1e-5]
 results = {'unscaled': {'y': [], 'p': []}, 'scaled': {'y': [], 'p': []}}
@@ -207,3 +254,6 @@ for idx, (ax, var, title) in enumerate(zip(axes, ['y', 'p'], [r'Relative $L^2$ E
 plt.tight_layout()
 plt.savefig('fast_sensitivity_result.png', dpi=150)
 print("\nDone! Saved plot to 'fast_sensitivity_result.png'")
+
+# Print loss function formulations with specific weights
+print_loss_formulation(alphas)
