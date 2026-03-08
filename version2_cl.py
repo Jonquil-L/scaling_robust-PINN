@@ -120,31 +120,22 @@ class SingleOutputNet(nn.Module):
 # ===========================================================================
 # Unified Solver for 2x2 Ablation
 # ===========================================================================
+# ===========================================================================
+# Unified Solver for 2x2 Ablation (Corrected)
+# ===========================================================================
 class OptimalControlSolver:
     def __init__(self, system_type, bc_type, alpha, mms, device):
-        """
-        system_type: 'unscaled' (Eq 1.4) or 'scaled' (Eq 1.5, Robust-PINN)
-        bc_type: 'soft' (penalty) or 'hard' (distance function)
-        """
         self.system_type = system_type
         self.bc_type = bc_type
         self.alpha = alpha
         self.mms = mms
         self.device = device
-        # 两个独立网络 (task1.md 要求)
+        
         self.net_y = SingleOutputNet().to(device)
         self.net_p = SingleOutputNet().to(device)
         self.omega_bc = 1.0
 
-        # Output Characteristic Scaling
-        # Unscaled: 需要缩放 p，防止 α⁻¹·p̄ 梯度爆炸
-        # Scaled:   方程已平衡，不加额外缩放；否则会抵消 Eq 1.5 的平衡效果
-        if system_type == 'unscaled':
-            self.scale_y = 1.0
-            self.scale_p = alpha          # p̄ ~ O(α)
-        else:  # scaled
-            self.scale_y = 1.0            # 网络直接预测缩放变量 y
-            self.scale_p = 1.0            # 网络直接预测缩放变量 p
+        # 注意：这里彻底删除了 scale_y 和 scale_p 的初始化，直接在 forward 中处理
 
     def apply_ansatz(self, x, raw_y, raw_p):
         x1, x2 = x[:, 0:1], x[:, 1:2]
@@ -154,16 +145,22 @@ class OptimalControlSolver:
     def forward_eval(self, x):
         raw_y = self.net_y(x)
         raw_p = self.net_p(x)
-        # Hard BC: ansatz 先于特征缩放 (乘法可交换，顺序等价)
+        
         if self.bc_type == 'hard':
             raw_y, raw_p = self.apply_ansatz(x, raw_y, raw_p)
-        # Output Characteristic Scaling
-        y_pred = raw_y * self.scale_y
-        p_pred = raw_p * self.scale_p
+            
+        # 【核心修正 1】：输出缩放只属于 Scaled (1.5式)
+        # 绝不能给 Unscaled (1.4式) 缩放 p，必须让它硬扛 1/alpha 的惩罚！
+        if self.system_type == 'scaled':
+            y_pred = raw_y * (self.alpha ** 0.25)
+            p_pred = raw_p * (self.alpha ** 0.75)
+        else:
+            y_pred = raw_y
+            p_pred = raw_p
+            
         return y_pred, p_pred
 
     def parameters(self):
-        """联合返回两个网络的参数，供 optimizer 使用"""
         return list(self.net_y.parameters()) + list(self.net_p.parameters())
 
     def train(self):
@@ -175,6 +172,50 @@ class OptimalControlSolver:
         self.net_p.eval()
 
     def compute_loss(self, x_interior, x_boundary):
+        x_interior.requires_grad_(True)
+        y_pred, p_pred = self.forward_eval(x_interior)
+        laplace_y = compute_laplacian(y_pred, x_interior)
+        laplace_p = compute_laplacian(p_pred, x_interior)
+
+        f = self.mms.source_f(x_interior)
+        y_d = self.mms.target_yd(x_interior)
+        u_d = self.mms.prior_ud(x_interior)
+
+        if self.system_type == 'unscaled':
+            # Unscaled 系统将直接面对极度不平衡的残差方程
+            res_pde1 = -laplace_y - (f + u_d) + (1.0 / self.alpha) * p_pred
+            res_pde2 = -laplace_p - y_pred + y_d
+            
+            loss_pde1 = torch.mean(res_pde1 ** 2)
+            loss_pde2 = torch.mean(res_pde2 ** 2)
+
+        elif self.system_type == 'scaled':
+            alpha_pow_1_2 = self.alpha ** 0.5
+            alpha_pow_3_4 = self.alpha ** 0.75
+            alpha_pow_1_4 = self.alpha ** 0.25
+            
+            res_pde1 = -alpha_pow_1_2 * laplace_y + p_pred - alpha_pow_3_4 * (f + u_d)
+            res_pde2 = -alpha_pow_1_2 * laplace_p - y_pred + alpha_pow_1_4 * y_d
+            
+            # 【核心修正 2】：Loss 动态平衡 (Non-dimensionalization)
+            # 缩放方程的残差量级分别是 α^0.75 和 α^0.25，必须除以它们归一化为 O(1)
+            # 否则 PDE1 的平方 Loss 会由于太小而被优化器忽略
+            res_pde1_norm = res_pde1 / alpha_pow_3_4
+            res_pde2_norm = res_pde2 / alpha_pow_1_4
+            
+            loss_pde1 = torch.mean(res_pde1_norm ** 2)
+            loss_pde2 = torch.mean(res_pde2_norm ** 2)
+        else:
+            raise ValueError("Invalid system_type")
+
+        if self.bc_type == 'soft':
+            y_bc_pred, p_bc_pred = self.forward_eval(x_boundary)
+            loss_bc = torch.mean(y_bc_pred ** 2) + torch.mean(p_bc_pred ** 2)
+        else:
+            loss_bc = torch.tensor(0.0, device=self.device)
+
+        total_loss = loss_pde1 + loss_pde2 + self.omega_bc * loss_bc
+        return total_loss, loss_pde1, loss_pde2, loss_bc
         x_interior.requires_grad_(True)
         y_pred, p_pred = self.forward_eval(x_interior)
         laplace_y = compute_laplacian(y_pred, x_interior)
