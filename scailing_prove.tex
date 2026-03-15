@@ -1,0 +1,99 @@
+\documentclass[a4paper, 11pt]{ctexart}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{geometry}
+\geometry{left=2.5cm, right=2.5cm, top=3cm, bottom=3cm}
+
+% 定义定理和证明环境
+\newtheorem{theorem}{定理}
+\renewcommand{\proofname}{\textbf{证明}}
+
+\title{物理信息神经网络 (PINNs) 中 Scaling 处理的严格数学证明}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{基础数学定义}
+
+设神经网络的参数为 $\theta = [\theta_y, \theta_p]^T$。在 PINNs 中，我们将状态变量和伴随状态变量参数化为 $\overline{y}_\theta, \overline{p}_\theta$（未缩放）和 $y_\theta, p_\theta$（缩放）。
+
+根据一阶最优性系统，定义未缩放系统的残差函数：
+\begin{align}
+    R_{1, \text{unscaled}}(\theta) &= -\Delta\overline{y}_\theta - f - u_d + \alpha^{-1}\overline{p}_\theta \\
+    R_{2, \text{unscaled}}(\theta) &= -\Delta\overline{p}_\theta - \overline{y}_\theta + y_d
+\end{align}
+未缩放的损失函数为：
+\begin{equation}
+    \mathcal{L}_{\text{unscaled}}(\theta) = w_1 \|R_{1, \text{unscaled}}(\theta)\|^2 + w_2 \|R_{2, \text{unscaled}}(\theta)\|^2
+\end{equation}
+
+定义缩放系统的残差函数：
+\begin{align}
+    R_{1, \text{scaled}}(\theta) &= -\alpha^{1/2}\Delta y_\theta + p_\theta - \alpha^{3/4}(f + u_d) \\
+    R_{2, \text{scaled}}(\theta) &= -\alpha^{1/2}\Delta p_\theta - y_\theta + \alpha^{1/4}y_d
+\end{align}
+缩放后的损失函数为：
+\begin{equation}
+    \mathcal{L}_{\text{scaled}}(\theta) = w_1 \|R_{1, \text{scaled}}(\theta)\|^2 + w_2 \|R_{2, \text{scaled}}(\theta)\|^2
+\end{equation}
+
+\section{策略一证明：控制权重不变，$\alpha \to 0$ 的渐进稳定性}
+
+\begin{theorem}[梯度发散与有界性]
+当权重 $w_1, w_2$ 固定，且 $\alpha \to 0$ 时，未缩放损失函数关于参数 $\theta_p$ 的梯度范数趋于无穷，即 $\lim_{\alpha \to 0} \|\nabla_{\theta_p} \mathcal{L}_{\text{unscaled}}\| = \infty$；而缩放后损失函数的梯度范数严格有界，即 $\lim_{\alpha \to 0} \|\nabla_{\theta} \mathcal{L}_{\text{scaled}}\| < \infty$。
+\end{theorem}
+
+\begin{proof}
+对于未缩放系统，考察损失函数对伴随状态网络参数 $\theta_p$ 的梯度：
+\begin{equation}
+    \nabla_{\theta_p} \mathcal{L}_{\text{unscaled}} = 2w_1 \langle R_{1, \text{unscaled}}, \nabla_{\theta_p} R_{1, \text{unscaled}} \rangle + 2w_2 \langle R_{2, \text{unscaled}}, \nabla_{\theta_p} R_{2, \text{unscaled}} \rangle
+\end{equation}
+展开第一项的导数 $\nabla_{\theta_p} R_{1, \text{unscaled}} = \alpha^{-1} \nabla_{\theta_p} \overline{p}_\theta$。代入得：
+\begin{equation}
+    \nabla_{\theta_p} \mathcal{L}_{\text{unscaled}} = 2w_1 \langle -\Delta\overline{y}_\theta - f - u_d + \alpha^{-1}\overline{p}_\theta, \alpha^{-1} \nabla_{\theta_p} \overline{p}_\theta \rangle + \mathcal{O}(1)
+\end{equation}
+提取 $\alpha$ 因子：
+\begin{equation}
+    \nabla_{\theta_p} \mathcal{L}_{\text{unscaled}} = \alpha^{-2} \left[ 2w_1 \langle \overline{p}_\theta, \nabla_{\theta_p} \overline{p}_\theta \rangle \right] + \alpha^{-1} \left[ 2w_1 \langle -\Delta\overline{y}_\theta - f - u_d, \nabla_{\theta_p} \overline{p}_\theta \rangle \right] + \mathcal{O}(1)
+\end{equation}
+显然，当 $\alpha \to 0$ 时，主导项为 $\mathcal{O}(\alpha^{-2})$。梯度发生极其严重的爆炸（奇异性），优化器无法收敛。
+
+对于缩放系统，考察其梯度：
+\begin{equation}
+    \nabla_{\theta} \mathcal{L}_{\text{scaled}} = 2w_1 \langle R_{1, \text{scaled}}, \nabla_\theta R_{1, \text{scaled}} \rangle + 2w_2 \langle R_{2, \text{scaled}}, \nabla_\theta R_{2, \text{scaled}} \rangle
+\end{equation}
+其中：
+\begin{align}
+    \nabla_{\theta_p} R_{1, \text{scaled}} &= \nabla_{\theta_p} p_\theta \quad \text{（系数为 } 1 \text{）} \\
+    \nabla_{\theta_p} R_{2, \text{scaled}} &= -\alpha^{1/2}\nabla_{\theta_p} (\Delta p_\theta) \quad \text{（系数为 } \mathcal{O}(\alpha^{1/2}) \text{）}
+\end{align}
+代入后，$\nabla_{\theta} \mathcal{L}_{\text{scaled}}$ 中的所有项包含的 $\alpha$ 因子均为正数次幂（$\alpha^{1/2}, \alpha^{1/4}, \alpha^{3/4}$）或常数 $1$。因此，当 $\alpha \to 0$ 时，$\|\nabla_{\theta} \mathcal{L}_{\text{scaled}}\|$ 被严格界定在 $\mathcal{O}(1)$ 范围内，不存在梯度爆炸。证明了 Scaling 使得模型对 $\alpha$ 变化具有鲁棒性。
+\end{proof}
+
+\section{策略二证明：固定极小 $\alpha$，损失项权重的刚性分析}
+
+\begin{theorem}[梯度刚性抑制]
+定义系统刚度比（Stiffness Ratio）为两项损失梯度的量级之比 $\kappa = \frac{\| \nabla_\theta \mathcal{L}_1 \|}{\| \nabla_\theta \mathcal{L}_2 \|}$。在极小 $\alpha$ （例如 $\alpha \ll 1$）下，未缩放系统的刚度比 $\kappa_{\text{unscaled}} = \mathcal{O}(\alpha^{-2})$，导致对外部权重 $w_1, w_2$ 极度敏感；而缩放系统的刚度比 $\kappa_{\text{scaled}}$ 被压缩至 $\mathcal{O}(\alpha^{-1/2})$ 或 $\mathcal{O}(1)$，显著降低了对外部权重的依赖。
+\end{theorem}
+
+\begin{proof}
+假设 $\alpha$ 是一个极小的固定正数（如 $10^{-4}$）。
+
+在未缩放系统中，两项损失产生的梯度范数分别为：
+\begin{align}
+    \| \nabla_\theta (w_1 \|R_{1, \text{unscaled}}\|^2) \| &\approx w_1 \cdot \mathcal{O}(\alpha^{-2}) \cdot \| \nabla_\theta \overline{p}_\theta \|^2 \\
+    \| \nabla_\theta (w_2 \|R_{2, \text{unscaled}}\|^2) \| &\approx w_2 \cdot \mathcal{O}(1) \cdot \| \nabla_\theta \overline{y}_\theta \|^2
+\end{align}
+为了让优化器能够同时优化这两个残差方程，必须满足梯度量级大致平衡，即要求 $w_1 \cdot \mathcal{O}(\alpha^{-2}) \approx w_2 \cdot \mathcal{O}(1)$。这意味着理论上需要设定 $w_2 / w_1 \approx \mathcal{O}(\alpha^{-2})$（例如当 $\alpha=10^{-4}$ 时，比值需高达 $10^8$）。这种极端的内在刚性意味着，任何对 $w_1, w_2$ 人为的微小改动，都会使某一梯度瞬间覆盖另一梯度，从而表现出对权重变化的高度敏感。
+
+在缩放系统中：
+\begin{align}
+    \| \nabla_\theta (w_1 \|R_{1, \text{scaled}}\|^2) \| &\approx w_1 \cdot \mathcal{O}(1) \cdot \| \nabla_\theta p_\theta \|^2 \\
+    \| \nabla_\theta (w_2 \|R_{2, \text{scaled}}\|^2) \| &\approx w_2 \cdot \mathcal{O}(\alpha^{1/2}) \cdot \| \nabla_\theta (\Delta p_\theta) \|^2 + w_2 \cdot \mathcal{O}(1) \cdot \| \nabla_\theta y_\theta \|^2
+\end{align}
+此时，两项梯度的最大内在量级差距被压缩到了 $\mathcal{O}(\alpha^{-1/2})$ 甚至 $\mathcal{O}(1)$ 之间。例如当 $\alpha=10^{-4}$ 时，$\alpha^{1/2} = 10^{-2}$，两项梯度的内在差距从 $10^8$ 锐减到了 $10^2$ 以内。因为内在梯度流已经处于相近的量级（良态系统），此时任意改变 $w_1, w_2$ 的值（在合理的 $\mathcal{O}(1)$ 范围内），都不会造成致命的梯度饥饿。因此，模型对损失函数的各项权重变化不再敏感。
+\end{proof}
+
+\end{document}
