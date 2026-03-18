@@ -26,5 +26,3 @@ Please base your script on the structural logic of my previous Unified Network c
 
 # Expected Output
 Provide the **complete, well-commented Python script**. Ensure the L-BFGS optimizer logic handles potential numerical instabilities gracefully, as large $\omega$ values might cause exploding gradients.
-
-
