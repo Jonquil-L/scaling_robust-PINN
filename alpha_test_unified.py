@@ -130,8 +130,10 @@ class UnifiedSolver:
             a_1_2 = self.alpha ** 0.5
             a_3_4 = self.alpha ** 0.75
             a_1_4 = self.alpha ** 0.25
-            res_pde1 = -a_1_2 * lap_y + p_pred - a_3_4 * (f + u_d)
-            res_pde2 = -a_1_2 * lap_p - y_pred + a_1_4 * y_d
+            # 必须除以对应的 alpha 次方进行数值归一化
+            res_pde1 = (-a_1_2 * lap_y + p_pred - a_3_4 * (f + u_d)) / a_3_4
+            res_pde2 = (-a_1_2 * lap_p - y_pred + a_1_4 * y_d) / a_1_4
+
 
         # Requirement 1b: 拼接为单一向量，单一权重
         # Loss = mean( [r1; r2]² )，等价于 (mean(r1²) + mean(r2²)) / 2
