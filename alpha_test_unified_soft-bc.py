@@ -151,7 +151,7 @@ class UnifiedSolver:
         loss_bc = torch.mean(bc_vec ** 2)
 
         # 【修改点 3】：按要求，PDE作为一个整体，BC作为一个整体相加
-        loss = loss_pde + loss_bc
+        loss = loss_pde + 1000*loss_bc
         return loss
 
 
