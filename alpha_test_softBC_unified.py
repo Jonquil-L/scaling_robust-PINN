@@ -326,5 +326,5 @@ for row, (key_y, key_p, norm_name) in enumerate(norm_keys):
         ax.legend(fontsize=8)
 
 plt.tight_layout()
-plt.savefig('alpha_test_softBC_unified_result.png', dpi=150)
-print("\nDone! Saved plot to 'alpha_test_softBC_unified_result.png'")
+plt.savefig('alpha_test_softBC_unified_result1.png', dpi=150)
+print("\nDone! Saved plot to 'alpha_test_softBC_unified_result1.png'")
