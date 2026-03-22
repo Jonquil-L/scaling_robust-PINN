@@ -47,6 +47,16 @@ class ManufacturedSolution:
         return (2.0 * self.pi**2 + 1.0) * self.exact_y(x)
     def prior_ud(self, x):
         return torch.zeros_like(x[:, 0:1])
+    def grad_exact_y(self, x):
+        x1, x2 = x[:, 0:1], x[:, 1:2]
+        dy_dx1 = self.pi * torch.cos(self.pi * x1) * torch.sin(self.pi * x2)
+        dy_dx2 = self.pi * torch.sin(self.pi * x1) * torch.cos(self.pi * x2)
+        return dy_dx1, dy_dx2
+    def grad_exact_p(self, x):
+        x1, x2 = x[:, 0:1], x[:, 1:2]
+        dp_dx1 = self.alpha * self.pi * torch.cos(self.pi * x1) * torch.sin(self.pi * x2)
+        dp_dx2 = self.alpha * self.pi * torch.sin(self.pi * x1) * torch.cos(self.pi * x2)
+        return dp_dx1, dp_dx2
 
 class SingleOutputNet(nn.Module):
     def __init__(self):
@@ -147,23 +157,59 @@ def fixed_weight_train(solver, gamma, adam_epochs=1500, lbfgs_epochs=1000):
     except Exception as e:
         pass 
 
-def evaluate_l2(solver, mms):
+def evaluate_errors(solver, mms):
     solver.net_y.eval(); solver.net_p.eval()
     x1, x2 = torch.meshgrid(torch.linspace(0, 1, 100), torch.linspace(0, 1, 100), indexing='ij')
     x_test = torch.stack([x1.flatten(), x2.flatten()], dim=-1).to(device)
-    
-    with torch.no_grad():
-        raw_y, raw_p = solver.forward_eval(x_test)
-        if solver.system_type == 'scaled':
-            y_pred = raw_y * (solver.alpha ** -0.25)
-            p_pred = raw_p * (solver.alpha ** 0.25)
-        else:
-            y_pred, p_pred = raw_y, raw_p
-            
-        y_exact, p_exact = mms.exact_y(x_test), mms.exact_p(x_test)
-        err_y = torch.sqrt(torch.sum((y_pred - y_exact)**2) / torch.sum(y_exact**2)).item()
-        err_p = torch.sqrt(torch.sum((p_pred - p_exact)**2) / torch.sum(p_exact**2)).item()
-    return err_y, err_p
+    x_test.requires_grad_(True)
+
+    raw_y, raw_p = solver.forward_eval(x_test)
+    if solver.system_type == 'scaled':
+        y_pred = raw_y * (solver.alpha ** -0.25)
+        p_pred = raw_p * (solver.alpha ** 0.25)
+    else:
+        y_pred, p_pred = raw_y, raw_p
+
+    y_exact, p_exact = mms.exact_y(x_test), mms.exact_p(x_test)
+
+    grad_y_pred = torch.autograd.grad(
+        outputs=y_pred, inputs=x_test,
+        grad_outputs=torch.ones_like(y_pred),
+        create_graph=False, retain_graph=True)[0]
+    grad_p_pred = torch.autograd.grad(
+        outputs=p_pred, inputs=x_test,
+        grad_outputs=torch.ones_like(p_pred),
+        create_graph=False, retain_graph=False)[0]
+
+    dy_dx1_exact, dy_dx2_exact = mms.grad_exact_y(x_test)
+    dp_dx1_exact, dp_dx2_exact = mms.grad_exact_p(x_test)
+    grad_y_exact = torch.cat([dy_dx1_exact, dy_dx2_exact], dim=1)
+    grad_p_exact = torch.cat([dp_dx1_exact, dp_dx2_exact], dim=1)
+
+    err_y = y_pred - y_exact
+    err_p = p_pred - p_exact
+    grad_err_y = grad_y_pred - grad_y_exact
+    grad_err_p = grad_p_pred - grad_p_exact
+
+    l2_y = torch.sqrt(torch.sum(err_y**2) / torch.sum(y_exact**2)).item()
+    l2_p = torch.sqrt(torch.sum(err_p**2) / torch.sum(p_exact**2)).item()
+
+    linf_y = torch.max(torch.abs(err_y)).item()
+    linf_p = torch.max(torch.abs(err_p)).item()
+
+    h1_err_y_sq = torch.sum(err_y**2) + torch.sum(grad_err_y**2)
+    h1_exact_y_sq = torch.sum(y_exact**2) + torch.sum(grad_y_exact**2)
+    h1_y = torch.sqrt(h1_err_y_sq / h1_exact_y_sq).item()
+
+    h1_err_p_sq = torch.sum(err_p**2) + torch.sum(grad_err_p**2)
+    h1_exact_p_sq = torch.sum(p_exact**2) + torch.sum(grad_p_exact**2)
+    h1_p = torch.sqrt(h1_err_p_sq / h1_exact_p_sq).item()
+
+    return {
+        'l2_y': l2_y, 'l2_p': l2_p,
+        'linf_y': linf_y, 'linf_p': linf_p,
+        'h1_y': h1_y, 'h1_p': h1_p,
+    }
 
 # ---------------------------------------------------------------------------
 # 5. Execution & Plotting
@@ -174,42 +220,61 @@ fixed_alpha = 1e-4
 # 设置极端的权重比率 (从 1:100 到 100:1)
 gammas = [0.01, 0.1, 1.0, 10.0, 100.0]
 
-results = {'unscaled': {'y': [], 'p': []}, 'scaled': {'y': [], 'p': []}}
+results = {
+    'unscaled': {'l2_y': [], 'l2_p': [], 'linf_y': [], 'linf_p': [], 'h1_y': [], 'h1_p': []},
+    'scaled':   {'l2_y': [], 'l2_p': [], 'linf_y': [], 'linf_p': [], 'h1_y': [], 'h1_p': []},
+}
 
 print(f"Testing Weight Sensitivity at fixed alpha = {fixed_alpha}")
-print(f"{'Gamma':<10} | {'System':<10} | {'Err_y':<12} | {'Err_p':<12} | {'Time(s)':<8}")
-print("-" * 60)
+print(f"\n{'Gamma':<10} | {'System':<10} | {'L2_y':<11} | {'L2_p':<11} | "
+      f"{'Linf_y':<11} | {'Linf_p':<11} | {'H1_y':<11} | {'H1_p':<11} | {'Time(s)':<8}")
+print("-" * 112)
 
 mms = ManufacturedSolution(fixed_alpha)
 
 for gamma in gammas:
     for sys in ['unscaled', 'scaled']:
-        torch.manual_seed(42) 
+        torch.manual_seed(42)
         solver = FastSolver(sys, fixed_alpha, mms)
-        
+
         t0 = time.time()
-        # 传入外部设置的 gamma 进行训练
         fixed_weight_train(solver, gamma=gamma, adam_epochs=1500, lbfgs_epochs=1000)
         t_elap = time.time() - t0
-        
-        err_y, err_p = evaluate_l2(solver, mms)
-        results[sys]['y'].append(err_y)
-        results[sys]['p'].append(err_p)
-        
-        print(f"{gamma:<10.2f} | {sys:<10} | {err_y:<12.4e} | {err_p:<12.4e} | {t_elap:<8.1f}")
 
-# Plotting
-fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-fig.suptitle(f'Weight Sensitivity Analysis ($\\alpha = {fixed_alpha}$)', fontsize=14)
+        errs = evaluate_errors(solver, mms)
+        for k in errs:
+            results[sys][k].append(errs[k])
 
-for idx, (ax, var, title) in enumerate(zip(axes, ['y', 'p'], [r'Relative $L^2$ Error of $\overline{y}$', r'Relative $L^2$ Error of $\overline{p}$'])):
-    ax.loglog(gammas, results['unscaled'][var], 'o-', color='tomato', label='Unscaled (Eq 1.4)', lw=2)
-    ax.loglog(gammas, results['scaled'][var], 's-', color='steelblue', label='Scaled (Eq 1.5 Robust-PINN)', lw=2)
-    ax.set_xlabel(r'$\gamma$ (weight on PDE1)')
-    ax.set_ylabel('Error')
-    ax.set_title(title)
-    ax.grid(True, which='both', alpha=0.3)
-    ax.legend()
+        print(f"{gamma:<10.2f} | {sys:<10} | {errs['l2_y']:<11.4e} | {errs['l2_p']:<11.4e} | "
+              f"{errs['linf_y']:<11.4e} | {errs['linf_p']:<11.4e} | "
+              f"{errs['h1_y']:<11.4e} | {errs['h1_p']:<11.4e} | {t_elap:<8.1f}")
+
+# ---------------------------------------------------------------------------
+# Plotting: 3x2 (L2, Linf, H1 for y and p)
+# ---------------------------------------------------------------------------
+fig, axes = plt.subplots(3, 2, figsize=(13, 14))
+fig.suptitle(r'$\gamma$-Sensitivity Analysis ($\alpha=10^{-4}$) — $L^2$, $L^\infty$, $H^1$ Norms',
+             fontsize=15)
+
+norm_keys = [
+    ('l2_y',   'l2_p',   r'Relative $L^2$'),
+    ('linf_y', 'linf_p', r'$L^\infty$ (max abs error)'),
+    ('h1_y',   'h1_p',   r'Relative $H^1$'),
+]
+var_labels = [r'$\overline{y}$', r'$\overline{p}$']
+
+for row, (key_y, key_p, norm_name) in enumerate(norm_keys):
+    for col, (key, var_label) in enumerate(zip([key_y, key_p], var_labels)):
+        ax = axes[row, col]
+        ax.loglog(gammas, results['unscaled'][key], 'o-', color='tomato',
+                  label='Unscaled (Eq 1.4)', lw=2)
+        ax.loglog(gammas, results['scaled'][key], 's-', color='steelblue',
+                  label='Scaled (Eq 1.5 Robust-PINN)', lw=2)
+        ax.set_xlabel(r'$\gamma$ (weight on PDE1)')
+        ax.set_ylabel(f'{norm_name} Error')
+        ax.set_title(f'{norm_name} Error of {var_label}')
+        ax.grid(True, which='both', alpha=0.3)
+        ax.legend(fontsize=8)
 
 plt.tight_layout()
 plt.savefig('weight_sensitivity_result.png', dpi=150)
