@@ -1,0 +1,721 @@
+% 编译器：XeLaTeX
+\documentclass[UTF8, 12pt]{ctexart}
+
+% ===================== 页面与排版 =====================
+\usepackage{geometry}
+\geometry{
+  a4paper,
+  left=2.5cm, right=2.5cm,
+  top=2.5cm,  bottom=2.5cm
+}
+
+% ===================== 数学 =====================
+\usepackage{amsmath, amssymb, amsthm}
+\newtheorem{theorem}{定理}[section]
+\renewcommand{\proofname}{\textbf{证明}}
+
+% ===================== 图表 =====================
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{caption}
+\captionsetup{font=small, labelfont=bf}
+
+% ===================== 代码高亮 =====================
+\usepackage{tcolorbox}
+\tcbuselibrary{listings, breakable}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\lstset{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!80!black}\bfseries,
+  commentstyle=\color{green!50!black}\itshape,
+  stringstyle=\color{red!60!black},
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=6pt,
+  breaklines=true,
+  frame=none,
+  showstringspaces=false,
+  tabsize=4,
+}
+
+% ===================== 超链接 =====================
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!70!black,
+  citecolor=green!50!black,
+  urlcolor=cyan!60!black,
+}
+
+% ===================== 杂项 =====================
+\usepackage{enumitem}
+
+% ===================== 标题信息 =====================
+\title{\textbf{Robust-PINN for Optimal Control Problems}\\[6pt]
+       \large Scaling 策略的有效性验证与状态约束扩展}
+\author{兰景琪\\[2pt] \small Mathematics 2026}
+\date{}
+
+% ==================================================================
+\begin{document}
+\maketitle
+
+\tableofcontents
+\newpage
+
+% ==================================================================
+\section{从优化问题到一阶最优性系统：(1.1)--(1.2) 向 (1.3) 的转化}
+\label{sec:derivation}
+
+对于带有约束条件的函数优化问题，可以理解为求目标函数在约束条件下的极值问题，即条件极值。
+从数学分析的角度来说，即使用 Lagrange 乘数法。
+PDE 约束下的问题同样可以采用 Lagrange 乘数法，核心思想不变——将有约束的问题转化为无约束问题。
+先构造 Lagrange 函数：
+\[
+  L(x,\lambda) = f(x) + \lambda \cdot g(x),
+\]
+其中 $g(x)$ 为等式约束，$f(x)$ 为目标函数，$\lambda \cdot g(x)$ 称为\textbf{惩罚项}。
+再利用变分原理，求解无约束问题的极值。
+
+\subsection{Lagrange 函数的构造}
+
+本问题的目标函数为：
+\begin{equation}
+  J(\bar{y}, \bar{u})
+  = \frac{1}{2}\|\bar{y} - y_d\|_{L^2(\Omega)}^2
+  + \frac{\alpha}{2}\|\bar{u} - u_d\|_{L^2(\Omega)}^2,
+  \label{eq:objective}
+\end{equation}
+约束状态为：
+\begin{equation}
+  g(\bar{y}) = -\Delta\bar{y} - f - \bar{u} = 0.
+  \label{eq:constraint}
+\end{equation}
+在函数空间 $L^2(\Omega)$ 中，"函数相乘"被内积量化，惩罚项为：
+\begin{equation}
+  \langle p,\, g(y)\rangle_{L^2(\Omega)}
+  = \int_\Omega p(x)\bigl(-\Delta y(x) - f(x) - \bar{u}(x)\bigr)\,\mathrm{d}x.
+  \label{eq:penalty-term}
+\end{equation}
+
+另外，PDE 约束 $-\Delta y - f - \bar{u} = 0$ 的解 $y$ 需满足正则性（光滑性）。
+在偏微分方程理论中，椭圆型 PDE 的 Dirichlet 问题的解属于 $H_0^1(\Omega)$ 空间，即
+\[
+  H_0^1(\Omega) = \bigl\{v \in L^2(\Omega) \,\big|\, \nabla v \in L^2(\Omega;\mathbb{R}^d),\;
+  v\big|_{\partial\Omega} = 0\bigr\}.
+\]
+$p$ 作为伴随状态，同样要求在 $\partial\Omega$ 上 $p=0$，便于后续分部积分。
+
+\subsection{对状态 $\bar{y}$ 的变分}
+
+根据变分原理，最优解需满足 Lagrange 函数对各变量的 Fréchet 导数为零。
+
+\paragraph{第一部分——目标函数对 $\bar{y}$ 的变分：}
+\[
+  \frac{\delta J}{\delta\bar{y}}
+  = \frac{\partial}{\partial\bar{y}}\!\left(\frac{1}{2}\int_\Omega(\bar{y}-y_d)^2\,\mathrm{d}x\right)
+  = \int_\Omega(\bar{y}-y_d)\,\delta\bar{y}\,\mathrm{d}x
+  = \langle\bar{y}-y_d,\;\delta\bar{y}\rangle_{L^2}.
+\]
+
+\paragraph{第二部分——惩罚项对 $\bar{y}$ 的变分：}
+利用 Green 第一公式：对任意 $u,v\in H_0^1(\Omega)$（边界上 $u=v=0$），有
+\begin{equation}
+  \int_\Omega \nabla u \cdot \nabla v\,\mathrm{d}x
+  = -\int_\Omega v\,\Delta u\,\mathrm{d}x
+  + \underbrace{\int_{\partial\Omega} v\,\nabla u \cdot \mathbf{n}\,\mathrm{d}S}_{\text{边界项}}.
+  \label{eq:green}
+\end{equation}
+由于 $p$ 和 $\delta\bar{y}$ 在 $\partial\Omega$ 上均为零，边界项消失，因此
+\[
+  \int_\Omega p\,(-\Delta\delta\bar{y})\,\mathrm{d}x
+  = \int_\Omega \delta\bar{y}\,(-\Delta p)\,\mathrm{d}x,
+  \qquad\text{即}\quad
+  \langle p,\,-\Delta\delta\bar{y}\rangle_{L^2}
+  = \langle -\Delta p,\,\delta\bar{y}\rangle_{L^2}.
+\]
+
+\paragraph{合并：} 变分条件为
+\[
+  \delta\mathcal{L}
+  = \langle\bar{y}-y_d,\;\delta\bar{y}\rangle_{L^2}
+  + \langle -\Delta p,\;\delta\bar{y}\rangle_{L^2}
+  = \langle\bar{y}-y_d - \Delta p,\;\delta\bar{y}\rangle_{L^2}
+  = 0,
+  \quad\forall\,\delta\bar{y}.
+\]
+由 $L^2$ 内积的非退化性，被积函数必须为零，从而得伴随方程：
+\begin{equation}
+  \boxed{-\Delta p = -(\ \bar{y} - y_d).}
+  \label{eq:adjoint}
+\end{equation}
+
+\subsection{对控制 $\bar{u}$ 的变分}
+
+目标函数对 $\bar{u}$ 的梯度为 $\langle\alpha(\bar{u}-u_d),\,\delta\bar{u}\rangle_{L^2}$，
+惩罚项对 $\bar{u}$ 的梯度为 $-\langle p,\,\delta\bar{u}\rangle_{L^2}$。
+合并得：
+\[
+  \langle\alpha(\bar{u}-u_d) - p,\;\delta\bar{u}\rangle_{L^2} = 0
+  \quad\forall\,\delta\bar{u},
+\]
+从而
+\begin{equation}
+  p = \alpha(\bar{u} - u_d).
+  \label{eq:control-eq}
+\end{equation}
+
+\begin{tcolorbox}[colback=blue!5!white, colframe=blue!60!black, title={注}]
+如果问题的 Lagrange 函数定义为
+$\mathcal{L}(y,u;p) = J(y,u) + \int_\Omega(\Delta y + f + u)\,p\,\mathrm{d}x$，
+则一阶最优性系统为
+\begin{equation}
+  \begin{cases}
+    -\Delta\bar{y} = f + \bar{u}  &\text{in } \Omega,\quad \bar{y}=0 \text{ on } \partial\Omega,\\
+    -\Delta\bar{p} = \bar{y}-y_d  &\text{in } \Omega,\quad \bar{p}=0 \text{ on } \partial\Omega,\\
+    \alpha(\bar{u}-u_d)+\bar{p}=0.
+  \end{cases}
+  \label{eq:kkt-alt}
+\end{equation}
+\end{tcolorbox}
+
+\subsection{对伴随 $p$ 的变分}
+
+Lagrange 函数中与 $p$ 相关的项仅为
+$\langle p,\,-\Delta\bar{y}-f-\bar{u}\rangle_{L^2}$，
+对 $p$ 求变分得：
+\[
+  \langle -\Delta\bar{y}-f-\bar{u},\;\delta p\rangle_{L^2} = 0
+  \quad\forall\,\delta p,
+\]
+即得状态方程：
+\begin{equation}
+  \boxed{-\Delta\bar{y} = f + \bar{u} \quad\text{in } \Omega, \qquad \bar{y}=0 \quad\text{on } \partial\Omega.}
+  \label{eq:state}
+\end{equation}
+
+
+% ==================================================================
+\section{Scaling 处理对敏感性降低的有效性}
+\label{sec:scaling-effectiveness}
+
+% ==================================================================
+\section{Part 1 解法说明}
+\label{sec:part1}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\linewidth]{part1_loss_comparison_20260301_091035.png}
+  \caption{Part 1 各损失分量演化曲线}
+  \label{fig:loss}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{part1_solution_20260301_091035.png}
+  \caption{Part 1 数值解与精确解对比}
+  \label{fig:sol}
+\end{figure}
+
+\subsection{Fourier Feature Embedding 的引入}
+
+在基本完成方法后，为排除过拟合，对 $f$ 进行了调整以测试模型的泛化能力。
+在提高频率的过程中发现，模型对高频方程的处理能力不足，
+于是加入了随机 Fourier 特征处理，使得模型在频率提高时依旧有良好表现。
+
+\subsection{优化器 L-BFGS 的引入}
+
+在加入 L-BFGS 之前，模型的误差量级虽然下降了，但结果一直处于震荡状态（图~\ref{fig:loss-no-lbfgs}）。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\linewidth]{part1_loss_comparison_20260301_085239.png}
+  \caption{未使用 L-BFGS 时的损失曲线——收敛震荡明显}
+  \label{fig:loss-no-lbfgs}
+\end{figure}
+
+在 PINN 经典论文~\cite{pinn_paper}及其参考文献~\cite{liu1989lbfgs}中，均选用了与 Adam
+等一阶优化器不同的、更适合 PINN 损失函数的优化器——L-BFGS。其核心特性如下：
+
+\begin{enumerate}[label=(\roman*)]
+  \item \textbf{利用曲率信息（拟牛顿法）：}
+    L-BFGS 通过保存历史梯度的变化，近似构造 Hessian 矩阵。
+    当 $\mathrm{MSE}_u$ 和 $\mathrm{MSE}_f$ 的梯度相互拉扯导致普通优化器原地打转时，
+    L-BFGS 能通过曲率信息"看穿"震荡，计算出使总损失同时下降的最优牛顿方向。
+
+  \item \textbf{全批量评估（Full-batch）：}
+    L-BFGS 是全批量算法——所有边界点和内部配点在每次迭代中完全固定并一次性输入。
+    只有这样，损失函数的"地形"才是静止的，L-BFGS 的线搜索才能精准找到谷底。
+\end{enumerate}
+
+L-BFGS 的高收敛精度，使得物理残差正则化项被逼近机器精度，
+从而在无网格划分（PINN 特性）的情况下，精准捕捉方程内部复杂的动态行为。
+
+
+% ==================================================================
+\section{数值实验}
+\label{sec:experiments}
+
+实验思路：为验证 Scaling 处理对敏感度降低的有效性，采用两种策略进行验证：
+\begin{itemize}
+  \item \textbf{策略一}：固定损失函数权重，验证误差对 $\alpha$ 的变化不敏感。
+  \item \textbf{策略二}：将 $\alpha$ 固定在较为病态的数值，验证误差对损失函数权重变化不敏感。
+\end{itemize}
+
+% ------------------------------------------------------------------
+\subsection{策略一：$\alpha$ 敏感性测试}
+\label{subsec:alpha-sensitivity}
+
+\begin{table}[H]
+  \centering
+  \caption{$\alpha$ 敏感性实验结果}
+  \label{tab:alpha-sensitivity}
+  \begin{tabular}{ccccc}
+    \toprule
+    $\alpha$ & System   & $\mathrm{Err}_y$ & $\mathrm{Err}_p$ & Time (s) \\
+    \midrule
+    $10^{-2}$ & Unscaled & $6.85\times10^{-5}$  & $4.30\times10^{-3}$  & 142.6 \\
+    $10^{-2}$ & Scaled   & $5.90\times10^{-5}$  & $3.24\times10^{-3}$  & 157.4 \\
+    \midrule
+    $10^{-3}$ & Unscaled & $3.92\times10^{-4}$  & $2.64\times10^{-2}$  & 140.6 \\
+    $10^{-3}$ & Scaled   & $8.80\times10^{-4}$  & $4.80\times10^{-2}$  & 164.4 \\
+    \midrule
+    $10^{-4}$ & Unscaled & $1.82\times10^{-2}$  & $7.65\times10^{-1}$  & 112.8 \\
+    $10^{-4}$ & Scaled   & $1.04\times10^{-3}$  & $7.21\times10^{-2}$  & 139.2 \\
+    \midrule
+    $10^{-5}$ & Unscaled & $9.71\times10^{-1}$  & $1.92\times10^{+1}$  & 109.7 \\
+    $10^{-5}$ & Scaled   & $9.91\times10^{-4}$  & $6.68\times10^{-2}$  & 140.7 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fast_sensitivity_result.png}
+  \caption{$\alpha$ 敏感性实验：相对 $L^2$ 误差随 $\alpha$ 的变化}
+  \label{fig:alpha-sensitivity}
+\end{figure}
+
+% ------------------------------------------------------------------
+\subsection{策略二：损失权重敏感性测试}
+\label{subsec:weight-sensitivity}
+
+\begin{table}[H]
+  \centering
+  \caption{损失权重 $\gamma$ 敏感性实验结果（$\alpha=10^{-4}$）}
+  \label{tab:weight-sensitivity}
+  \begin{tabular}{ccccc}
+    \toprule
+    $\gamma$ & System & $\mathrm{Err}_y$ & $\mathrm{Err}_p$ & Time (s) \\
+    \midrule
+    $0.01$  & Unscaled & $3.46\times10^{-3}$ & $2.49\times10^{-1}$ & 105.7 \\
+    $0.01$  & Scaled   & $1.67\times10^{-3}$ & $9.49\times10^{-2}$ & 109.9 \\
+    \midrule
+    $0.10$  & Unscaled & $3.74\times10^{-3}$ & $2.96\times10^{-1}$ & 100.3 \\
+    $0.10$  & Scaled   & $7.48\times10^{-4}$ & $6.28\times10^{-2}$ & 125.9 \\
+    \midrule
+    $1.00$  & Unscaled & $1.82\times10^{-2}$ & $7.65\times10^{-1}$ & 114.3 \\
+    $1.00$  & Scaled   & $1.04\times10^{-3}$ & $7.21\times10^{-2}$ & 135.9 \\
+    \midrule
+    $10.00$ & Unscaled & $9.84\times10^{-1}$ & $1.94\times10^{+1}$ & 108.6 \\
+    $10.00$ & Scaled   & $1.38\times10^{-3}$ & $7.04\times10^{-2}$ & 215.7 \\
+    \midrule
+    $100.00$ & Unscaled & $9.90\times10^{-1}$ & $1.95\times10^{+1}$ & 111.8 \\
+    $100.00$ & Scaled   & $6.67\times10^{-3}$ & $1.84\times10^{-1}$ & 150.7 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{weight_sensitivity_result.png}
+  \caption{损失权重 $\gamma$ 敏感性实验：相对 $L^2$ 误差随 $\gamma$ 的变化}
+  \label{fig:weight-sensitivity}
+\end{figure}
+
+
+% ==================================================================
+\subsection{基础数学定义}
+\label{subsec:math-defs}
+
+设神经网络的参数为 $\theta = [\theta_y,\;\theta_p]^\mathsf{T}$。
+在 PINNs 中，将状态变量和伴随状态变量参数化为
+$\overline{y}_\theta,\;\overline{p}_\theta$（未缩放）和 $y_\theta,\;p_\theta$（缩放）。
+
+\paragraph{未缩放系统的残差与损失.}
+根据一阶最优性系统，定义：
+\begin{align}
+  R_{1,\mathrm{un}}(\theta) &= -\Delta\overline{y}_\theta - f - u_d + \alpha^{-1}\overline{p}_\theta, \label{eq:R1-un}\\
+  R_{2,\mathrm{un}}(\theta) &= -\Delta\overline{p}_\theta - \overline{y}_\theta + y_d. \label{eq:R2-un}
+\end{align}
+未缩放的损失函数为：
+\begin{equation}
+  \mathcal{L}_{\mathrm{un}}(\theta)
+  = w_1\|R_{1,\mathrm{un}}(\theta)\|^2 + w_2\|R_{2,\mathrm{un}}(\theta)\|^2.
+  \label{eq:loss-un}
+\end{equation}
+
+\paragraph{缩放系统的残差与损失.}
+\begin{align}
+  R_{1,\mathrm{sc}}(\theta) &= -\alpha^{1/2}\Delta y_\theta + p_\theta - \alpha^{3/4}(f + u_d), \label{eq:R1-sc}\\
+  R_{2,\mathrm{sc}}(\theta) &= -\alpha^{1/2}\Delta p_\theta - y_\theta + \alpha^{1/4}y_d. \label{eq:R2-sc}
+\end{align}
+缩放后的损失函数为：
+\begin{equation}
+  \mathcal{L}_{\mathrm{sc}}(\theta)
+  = w_1\|R_{1,\mathrm{sc}}(\theta)\|^2 + w_2\|R_{2,\mathrm{sc}}(\theta)\|^2.
+  \label{eq:loss-sc}
+\end{equation}
+
+
+% ------------------------------------------------------------------
+\subsection{策略一证明：$\alpha\to 0$ 时的梯度渐近稳定性}
+\label{subsec:proof-alpha}
+
+\begin{theorem}[梯度发散与有界性]
+\label{thm:gradient-divergence}
+当权重 $w_1, w_2$ 固定，且 $\alpha\to 0$ 时：
+\begin{enumerate}[label=(\alph*)]
+  \item 未缩放损失函数关于 $\theta_p$ 的梯度范数趋于无穷：
+    $\displaystyle\lim_{\alpha\to 0}\|\nabla_{\theta_p}\mathcal{L}_{\mathrm{un}}\| = \infty$；
+  \item 缩放后损失函数的梯度范数严格有界：
+    $\displaystyle\lim_{\alpha\to 0}\|\nabla_\theta\mathcal{L}_{\mathrm{sc}}\| < \infty$。
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+\textbf{(a) 未缩放系统.}\;
+考察损失函数对 $\theta_p$ 的梯度：
+\begin{equation}
+  \nabla_{\theta_p}\mathcal{L}_{\mathrm{un}}
+  = 2w_1\langle R_{1,\mathrm{un}},\;\nabla_{\theta_p}R_{1,\mathrm{un}}\rangle
+  + 2w_2\langle R_{2,\mathrm{un}},\;\nabla_{\theta_p}R_{2,\mathrm{un}}\rangle.
+  \label{eq:grad-un}
+\end{equation}
+其中 $\nabla_{\theta_p}R_{1,\mathrm{un}} = \alpha^{-1}\nabla_{\theta_p}\overline{p}_\theta$。
+代入并提取 $\alpha$ 因子：
+\begin{equation}
+  \nabla_{\theta_p}\mathcal{L}_{\mathrm{un}}
+  = \underbrace{\alpha^{-2}\bigl[2w_1\langle\overline{p}_\theta,\;\nabla_{\theta_p}\overline{p}_\theta\rangle\bigr]}_{\text{主导项}}
+  + \alpha^{-1}\bigl[2w_1\langle -\Delta\overline{y}_\theta - f - u_d,\;\nabla_{\theta_p}\overline{p}_\theta\rangle\bigr]
+  + \mathcal{O}(1).
+  \label{eq:grad-un-expand}
+\end{equation}
+当 $\alpha\to 0$ 时，主导项为 $\mathcal{O}(\alpha^{-2})$，梯度严重爆炸。
+
+\medskip
+\textbf{(b) 缩放系统.}\;
+考察梯度：
+\begin{equation}
+  \nabla_\theta\mathcal{L}_{\mathrm{sc}}
+  = 2w_1\langle R_{1,\mathrm{sc}},\;\nabla_\theta R_{1,\mathrm{sc}}\rangle
+  + 2w_2\langle R_{2,\mathrm{sc}},\;\nabla_\theta R_{2,\mathrm{sc}}\rangle,
+  \label{eq:grad-sc}
+\end{equation}
+其中
+\begin{align}
+  \nabla_{\theta_p}R_{1,\mathrm{sc}} &= \nabla_{\theta_p}p_\theta
+    &\text{（系数为 $1$）},   \label{eq:grad-sc-R1}\\
+  \nabla_{\theta_p}R_{2,\mathrm{sc}} &= -\alpha^{1/2}\nabla_{\theta_p}(\Delta p_\theta)
+    &\text{（系数为 $\mathcal{O}(\alpha^{1/2})$）}. \label{eq:grad-sc-R2}
+\end{align}
+所有项包含的 $\alpha$ 因子均为正数次幂（$\alpha^{1/2},\;\alpha^{1/4},\;\alpha^{3/4}$）或常数 $1$。
+因此 $\|\nabla_\theta\mathcal{L}_{\mathrm{sc}}\| = \mathcal{O}(1)$，不存在梯度爆炸。
+\end{proof}
+
+% ------------------------------------------------------------------
+\subsection{策略二证明：固定极小 $\alpha$ 下的梯度刚性分析}
+\label{subsec:proof-weight}
+
+\begin{theorem}[梯度刚性抑制]
+\label{thm:stiffness}
+定义系统刚度比为
+$\kappa = \|\nabla_\theta\mathcal{L}_1\| \big/ \|\nabla_\theta\mathcal{L}_2\|$。
+在 $\alpha\ll 1$ 下：
+\begin{enumerate}[label=(\alph*)]
+  \item 未缩放系统：$\kappa_{\mathrm{un}} = \mathcal{O}(\alpha^{-2})$，对权重 $w_1,w_2$ 极度敏感；
+  \item 缩放系统：$\kappa_{\mathrm{sc}}$ 被压缩至 $\mathcal{O}(\alpha^{-1/2})$ 乃至 $\mathcal{O}(1)$。
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+设 $\alpha$ 为极小的固定正数（如 $10^{-4}$）。
+
+\textbf{未缩放系统.}\;
+两项损失产生的梯度范数分别为：
+\begin{align}
+  \|\nabla_\theta(w_1\|R_{1,\mathrm{un}}\|^2)\| &\approx w_1 \cdot \mathcal{O}(\alpha^{-2})\cdot\|\nabla_\theta\overline{p}_\theta\|^2, \\
+  \|\nabla_\theta(w_2\|R_{2,\mathrm{un}}\|^2)\| &\approx w_2 \cdot \mathcal{O}(1)\cdot\|\nabla_\theta\overline{y}_\theta\|^2.
+\end{align}
+为使优化器能同时优化两个残差，需
+$w_1\cdot\mathcal{O}(\alpha^{-2}) \approx w_2\cdot\mathcal{O}(1)$，
+即 $w_2/w_1 \approx \mathcal{O}(\alpha^{-2})$
+（当 $\alpha=10^{-4}$ 时，比值需高达 $10^8$）。
+任何对 $w_1,w_2$ 的微小改动都会使某一梯度瞬间覆盖另一梯度。
+
+\medskip
+\textbf{缩放系统.}\;
+\begin{align}
+  \|\nabla_\theta(w_1\|R_{1,\mathrm{sc}}\|^2)\| &\approx w_1\cdot\mathcal{O}(1)\cdot\|\nabla_\theta p_\theta\|^2, \\
+  \|\nabla_\theta(w_2\|R_{2,\mathrm{sc}}\|^2)\| &\approx w_2\cdot\mathcal{O}(\alpha^{1/2})\cdot\|\nabla_\theta(\Delta p_\theta)\|^2
+    + w_2\cdot\mathcal{O}(1)\cdot\|\nabla_\theta y_\theta\|^2.
+\end{align}
+两项梯度的内在量级差距从 $10^8$ 锐减至 $\alpha^{-1/2}=10^2$ 以内。
+在合理的 $\mathcal{O}(1)$ 范围内改变 $w_1,w_2$ 不会造成梯度饥饿，
+模型对损失权重的变化不再敏感。
+\end{proof}
+
+
+% ==================================================================
+\section{Prox-PINN 解法说明}
+\label{sec:prox-pinn}
+
+用近端算子一刀切砍去多余的部分，用 \texttt{clamp} 锁死，完成任务。
+
+
+% ==================================================================
+\section{State Constraint 求解}
+\label{sec:state-constraint}
+
+\begin{tcolorbox}[
+  title={State Constraint 完整代码},
+  breakable,
+  colback=white,
+  colframe=black!60,
+  fonttitle=\bfseries\small,
+]
+\begin{lstlisting}
+"""
+Robust-PINN for Elliptic Optimal Control Problems
+==================================================
+Part 2: Augmented Lagrangian + DualNet
+"""
+
+import math, time
+import torch
+import torch.nn as nn
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+# Device setup: cuda -> mps -> cpu
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
+print(f"Using device: {device}")
+
+def _ts():
+    return time.strftime("%Y%m%d_%H%M%S")
+
+# === Manufactured Solution (high-freq) ===
+def y_true(x):
+    return torch.sin(2*math.pi*x[:,0:1]) * torch.sin(2*math.pi*x[:,1:2])
+
+def p_true(x):
+    return torch.sin(2*math.pi*x[:,0:1]) * torch.sin(2*math.pi*x[:,1:2])
+
+def f_source(x, alpha):
+    return 8.0 * math.pi**2 * y_true(x)
+
+def y_d_target(x):
+    return y_true(x) - 8.0 * math.pi**2 * p_true(x)
+
+def u_d_target(x, alpha):
+    return (1.0 / alpha) * p_true(x)
+
+# === Laplacian via autograd ===
+def laplacian(u, x):
+    grad_u = torch.autograd.grad(
+        u, x, grad_outputs=torch.ones_like(u),
+        create_graph=True, retain_graph=True
+    )[0]
+    lap = torch.zeros_like(u)
+    for i in range(x.shape[1]):
+        grad_ui = grad_u[:, i:i+1]
+        lap_i = torch.autograd.grad(
+            grad_ui, x, grad_outputs=torch.ones_like(grad_ui),
+            create_graph=True, retain_graph=True
+        )[0][:, i:i+1]
+        lap = lap + lap_i
+    return lap
+
+def sample_interior(n, device):
+    return torch.rand(n, 2, device=device)
+
+# === PrimalNet ===
+class PrimalNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(2, 64), nn.Tanh(),
+            nn.Linear(64, 64), nn.Tanh(),
+            nn.Linear(64, 64), nn.Tanh(),
+            nn.Linear(64, 64), nn.Tanh(),
+            nn.Linear(64, 2),
+        )
+
+    def forward(self, x):
+        out = self.net(x)
+        mask = x[:,0:1]*(1-x[:,0:1])*x[:,1:2]*(1-x[:,1:2])
+        y_sc = mask * out[:, 0:1]
+        p_sc = out[:, 1:2]
+        return y_sc, p_sc
+
+# === DualNet (Fourier Features + Softplus) ===
+class DualNet(nn.Module):
+    def __init__(self, n_fourier=32, hidden=64):
+        super().__init__()
+        B = torch.randn(n_fourier, 2) * 5.0
+        self.register_buffer("B", B)
+        in_dim = 2 * n_fourier
+        self.mlp = nn.Sequential(
+            nn.Linear(in_dim, hidden), nn.Tanh(),
+            nn.Linear(hidden, hidden), nn.Tanh(),
+            nn.Linear(hidden, hidden), nn.Tanh(),
+            nn.Linear(hidden, 1),
+        )
+        self.softplus = nn.Softplus()
+
+    def forward(self, x):
+        proj = x @ self.B.T
+        feat = torch.cat([torch.sin(proj), torch.cos(proj)], dim=1)
+        return self.softplus(self.mlp(feat))
+
+# === Augmented Lagrangian Loss ===
+def augmented_lagrangian_loss(primal, dual, x, alpha, y_max, rho):
+    x = x.requires_grad_(True)
+    y_sc, p_sc = primal(x)
+    lap_y = laplacian(y_sc, x)
+    lap_p = laplacian(p_sc, x)
+
+    sqrt_a, a34, a14 = alpha**0.5, alpha**0.75, alpha**0.25
+    f_val  = f_source(x, alpha)
+    yd_val = y_d_target(x)
+    ud_val = u_d_target(x, alpha)
+
+    R1 = -sqrt_a*lap_y + p_sc - a34*(f_val + ud_val)
+    R2 = -sqrt_a*lap_p - y_sc + a14*yd_val
+    loss_pde = (R1**2).mean() + (R2**2).mean()
+
+    y_pred = y_sc / a14
+    violation = torch.relu(y_pred - y_max)
+    mu = dual(x.detach())
+    loss_c = (mu.detach()*violation + 0.5*rho*violation**2).mean()
+    return loss_pde, loss_c, loss_pde + loss_c
+
+# === Training loop ===
+def train_part2(alpha=1e-4, n_epochs=3000, n_warmup=500,
+                n_int=1024, y_max=1.0,
+                rho_init=0.01, rho_final=50.0,
+                K=3, lr_primal=1e-3, lr_dual=5e-4):
+    primal = PrimalNet().to(device)
+    dual   = DualNet().to(device)
+    opt_p = torch.optim.Adam(primal.parameters(), lr=lr_primal)
+    opt_d = torch.optim.Adam(dual.parameters(),   lr=lr_dual)
+
+    rho = rho_init
+    # ... (training loop with EMA adaptive rho)
+    return primal, dual, hist
+
+if __name__ == "__main__":
+    main()
+\end{lstlisting}
+\end{tcolorbox}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.6\linewidth]{part2_loss_tuning_20260301_115343.png}
+  \caption{Part 2 增广 Lagrangian 训练损失演化}
+  \label{fig:loss2}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.7\linewidth]{part2_constraint_tuning_20260301_115343.png}
+  \caption{Part 2 数值解与约束违反量}
+  \label{fig:sol2-con}
+\end{figure}
+
+% ------------------------------------------------------------------
+\subsection{总体思路}
+
+搭建双网络模型：主网络 PrimalNet 负责拟合 PDE 物理场；
+辅助网络 DualNet 用于模拟 Lagrange 乘子，精准捕捉状态约束中变成常微分测度的 Lagrange 乘子在约束激活边界处产生的 Dirac 冲击，
+从而避免生硬的全局常数惩罚，保留了 PINN 无网格的优势。
+两个网络中加入博弈规则——增广 Lagrangian 法，以避免无穷大的惩罚梯度。
+
+\subsection{Fourier Features 嵌入}
+
+在 PrimalNet 和 DualNet 中均进行了 Fourier Features 嵌入，
+赋予网络高频表达能力，打破谱偏差，使其可以拟合到 $-1.0$ 的波底。
+
+\subsection{增广 Lagrangian 法与 DualNet 的配合}
+
+构造增广 Lagrange 函数：
+\begin{equation}
+  \mathcal{L}
+  = \underbrace{\mathrm{Loss}_{\mathrm{PDE}}}_{\text{物理残差}}
+  + \underbrace{\int_\Omega \mu(x)\cdot\mathrm{violation}\,\mathrm{d}x}_{\text{DualNet 惩罚}}
+  + \underbrace{\frac{\rho}{2}\int_\Omega\mathrm{violation}^2\,\mathrm{d}x}_{\text{二次罚项}},
+  \label{eq:augmented-lagrangian}
+\end{equation}
+其中 $\mathrm{violation} = \max(y - y_{\max},\;0)$。
+
+二次罚项 $\frac{\rho}{2}\,\mathrm{violation}^2$ 的作用如同在 $y = y_{\max}$ 处安装弹簧减震器：
+即使 $\mu(x)$ 预测不准，PrimalNet 在越界时感受到的是一个局部强凸的损失地形，
+从而平稳地朝约束边界下降，消除标准 Lagrangian 法的剧烈震荡。
+
+ALM 的核心优势在于：\textbf{无需将 $\rho$ 提高至无穷大}即可拦住 $y$。
+阻拦越界的主要力量来自 $\mu(x)$（DualNet 的学习成果）。
+当 $y$ 试图越界时，DualNet 会学习到该点所需的精确阻力。
+此时 $\rho$ 只需保持中等大小（实验中 $\rho\approx 4.1$ 即可），
+仅用于维持局部凸性和稳定性，梯度流动保持健康。
+
+\subsection{极大--极小博弈}
+
+两个网络交替对抗训练：
+\begin{itemize}
+  \item \textbf{PrimalNet（极小）}：在满足 PDE 的前提下修改控制力 $u$，使总损失最小，试图躲避惩罚。
+  \item \textbf{DualNet（极大）}：通过梯度上升寻找越界点——哪里越界（$\mathrm{violation}>0$），就在哪里放大 $\mu(x)$ 的值进行惩罚。
+\end{itemize}
+这免去了传统 Lagrange 方法的复杂公式推导，模拟了 Lagrange 乘数法的工作机理，
+但利用深度学习使其更适应复杂问题。
+理想结果是在博弈过程中系统达到 Nash 均衡。
+
+\subsection{目前存在的问题}
+
+目前误差量级有所下降，但出现"条形码"形状的震荡——
+这是由于状态控制是间接的，博弈极度激烈，
+系统陷入了"越界 $\to$ 重罚 $\to$ 退缩 $\to$ 放松 $\to$ 再越界"的死循环。
+我们尝试了以下改进手段，但均未实现稳定收敛至 Nash 均衡：
+\begin{itemize}
+  \item Optimistic Adam（极外梯度预判）
+  \item 自适应 $\rho$ 更新策略
+  \item 对偶熵正则化
+\end{itemize}
+
+
+% ==================================================================
+\begin{thebibliography}{9}
+
+\bibitem{pinn_paper}
+Raissi, M., Perdikaris, P., \& Karniadakis, G.\,E.\ (2019).
+Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations.
+\textit{Journal of Computational Physics}, 378, 686--707.
+
+\bibitem{liu1989lbfgs}
+Liu, D.\,C.\ \& Nocedal, J.\ (1989).
+On the limited memory BFGS method for large scale optimization.
+\textit{Mathematical Programming}, 45(1-3), 503--528.
+
+\end{thebibliography}
+
+\end{document}
